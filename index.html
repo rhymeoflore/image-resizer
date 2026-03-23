@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Resizer">
+<meta name="theme-color" content="#1e1e2e">
+<link rel="manifest" href="manifest.json">
+<title>Image Resizer</title>
+<style>
+  :root{--bg:#1e1e2e;--surface:#2a2a3e;--accent:#7c6af7;--accent-h:#9d8fff;--fg:#cdd6f4;--dim:#6c7086;--ok:#a6e3a1;--err:#f38ba8;--radius:12px}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;align-items:center;padding:env(safe-area-inset-top,24px) 16px 32px;min-height:100vh;min-height:100dvh}
+  .card{background:var(--surface);border-radius:16px;padding:32px 28px;max-width:480px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,.35)}
+  h1{font-size:1.4rem;color:var(--accent);margin-bottom:4px;text-align:center}
+  .sub{color:var(--dim);font-size:.82rem;margin-bottom:24px;text-align:center}
+  label{display:block;font-size:.78rem;color:var(--dim);margin-bottom:4px;margin-top:16px;text-transform:uppercase;letter-spacing:.5px}
+  input[type=text],input[type=number],select{width:100%;padding:10px 12px;border:1px solid var(--dim);border-radius:var(--radius);background:var(--bg);color:var(--fg);font-size:1rem;outline:none;transition:border .2s}
+  input:focus,select:focus{border-color:var(--accent)}
+  .file-drop{border:2px dashed var(--dim);border-radius:var(--radius);padding:28px 16px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;margin-top:4px;position:relative}
+  .file-drop.over{border-color:var(--accent);background:rgba(124,106,247,.08)}
+  .file-drop.has-files{border-color:var(--ok);border-style:solid}
+  .file-drop input{position:absolute;inset:0;opacity:0;cursor:pointer}
+  .file-drop p{color:var(--dim);font-size:.88rem;pointer-events:none}
+  .file-drop .count{color:var(--ok);font-size:.85rem;margin-top:6px;pointer-events:none}
+  .row{display:flex;gap:12px}
+  .row>div{flex:1}
+  .check-row{margin-top:12px;display:flex;align-items:center;gap:8px}
+  .check-row input{accent-color:var(--accent);width:17px;height:17px}
+  .check-row span{font-size:.86rem}
+  .hint{font-size:.75rem;color:var(--dim);margin-top:3px}
+  button{margin-top:24px;width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius);font-size:1rem;font-weight:600;cursor:pointer;transition:background .2s;-webkit-tap-highlight-color:transparent}
+  button:hover,button:active{background:var(--accent-h)}
+  button:disabled{opacity:.45;cursor:default}
+  .msg{margin-top:16px;padding:12px;border-radius:var(--radius);font-size:.85rem;line-height:1.4;text-align:center}
+  .msg.ok{background:rgba(166,227,161,.1);color:var(--ok)}
+  .msg.err{background:rgba(243,139,168,.1);color:var(--err)}
+  #spinner{display:none;margin-top:16px;text-align:center;color:var(--dim);font-size:.88rem}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #spinner::before{content:"";display:inline-block;width:16px;height:16px;border:2px solid var(--dim);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:8px}
+  .preview-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  .preview-grid img{width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--dim)}
+  @media(max-width:400px){.card{padding:24px 18px}h1{font-size:1.2rem}}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Image Resizer</h1>
+  <p class="sub">100% on-device &mdash; your photos never leave your phone</p>
+
+  <label>Images</label>
+  <div class="file-drop" id="dropZone">
+    <input type="file" id="fileInput" accept="image/*" multiple>
+    <p>Tap to choose or drop images here</p>
+    <div class="count" id="fileCount"></div>
+  </div>
+  <div class="preview-grid" id="previews"></div>
+
+  <div class="row">
+    <div><label>Width (px)</label><input type="number" id="width" min="1" placeholder="auto"></div>
+    <div><label>Height (px)</label><input type="number" id="height" min="1" placeholder="auto"></div>
+  </div>
+
+  <div class="check-row">
+    <input type="checkbox" id="crop" checked>
+    <span>Crop to exact dimensions</span>
+  </div>
+
+  <label>Max file size</label>
+  <input type="text" id="maxSize" placeholder="e.g.  500KB  or  2MB">
+  <p class="hint">Leave blank to skip. Works for JPEG &amp; WebP.</p>
+
+  <label>Output format</label>
+  <select id="fmt">
+    <option value="original">Keep original</option>
+    <option value="image/jpeg">JPEG</option>
+    <option value="image/png">PNG</option>
+    <option value="image/webp">WebP</option>
+  </select>
+
+  <button id="btn" disabled>Resize &amp; Download</button>
+  <div id="spinner">Processing&hellip;</div>
+  <div id="msg"></div>
+</div>
+
+<script>
+(function(){
+  var fileInput=document.getElementById("fileInput"),dropZone=document.getElementById("dropZone"),
+      previews=document.getElementById("previews"),fileCount=document.getElementById("fileCount"),
+      btn=document.getElementById("btn"),spinner=document.getElementById("spinner"),
+      msgEl=document.getElementById("msg"),files=[];
+
+  /* ── File picking & drag-drop ────────────────────────────────────── */
+  fileInput.addEventListener("change",function(){setFiles(this.files)});
+  dropZone.addEventListener("dragover",function(e){e.preventDefault();dropZone.classList.add("over")});
+  dropZone.addEventListener("dragleave",function(){dropZone.classList.remove("over")});
+  dropZone.addEventListener("drop",function(e){e.preventDefault();dropZone.classList.remove("over");setFiles(e.dataTransfer.files)});
+
+  function setFiles(fl){
+    files=Array.from(fl).filter(function(f){return f.type.startsWith("image/")});
+    fileCount.textContent=files.length?files.length+" image(s) selected":"";
+    dropZone.classList.toggle("has-files",files.length>0);
+    btn.disabled=files.length===0;
+    previews.innerHTML="";
+    files.slice(0,12).forEach(function(f){
+      var img=document.createElement("img");img.src=URL.createObjectURL(f);previews.appendChild(img);
+    });
+    if(files.length>12){
+      var s=document.createElement("span");
+      s.style.cssText="color:var(--dim);font-size:.8rem;align-self:center";
+      s.textContent="+"+(files.length-12)+" more";
+      previews.appendChild(s);
+    }
+    msgEl.innerHTML="";
+  }
+
+  /* ── Helpers ─────────────────────────────────────────────────────── */
+  function parseSize(s){
+    s=s.trim().toUpperCase();if(!s)return 0;
+    if(s.endsWith("MB"))return parseFloat(s)*1048576;
+    if(s.endsWith("KB"))return parseFloat(s)*1024;
+    if(s.endsWith("B"))return parseInt(s);
+    return parseInt(s);
+  }
+
+  function loadImage(file){
+    return new Promise(function(ok,no){
+      var i=new Image();i.onload=function(){ok(i)};i.onerror=no;
+      i.src=URL.createObjectURL(file);
+    });
+  }
+
+  function toBlob(canvas,mime,q){
+    return new Promise(function(ok){canvas.toBlob(function(b){ok(b)},mime,q)});
+  }
+
+  function mimeFor(file,sel){
+    if(sel!=="original")return sel;
+    if(file.type==="image/png")return"image/png";
+    if(file.type==="image/webp")return"image/webp";
+    return"image/jpeg";
+  }
+  function extFor(m){if(m==="image/png")return".png";if(m==="image/webp")return".webp";return".jpg"}
+  function baseName(n){var d=n.lastIndexOf(".");return d>0?n.substring(0,d):n}
+
+  function downloadBlob(blob,name){
+    var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(a.href)},1000);
+  }
+
+  /* ── Canvas resize ──────────────────────────────────────────────── */
+  function resizeCanvas(img,tw,th,crop){
+    var ow=img.naturalWidth,oh=img.naturalHeight,w=tw,h=th;
+    if(w&&h){
+      if(crop){
+        var sc=Math.max(w/ow,h/oh),sw=w/sc,sh=h/sc,sx=(ow-sw)/2,sy=(oh-sh)/2;
+        var c=document.createElement("canvas");c.width=w;c.height=h;
+        c.getContext("2d").drawImage(img,sx,sy,sw,sh,0,0,w,h);return c;
+      }else{
+        var sc=Math.min(w/ow,h/oh);w=Math.round(ow*sc);h=Math.round(oh*sc);
+      }
+    }else if(w){h=Math.round(oh*(w/ow))}
+     else if(h){w=Math.round(ow*(h/oh))}
+     else{w=ow;h=oh}
+    var c=document.createElement("canvas");
+    c.width=Math.max(1,w);c.height=Math.max(1,h);
+    c.getContext("2d").drawImage(img,0,0,c.width,c.height);return c;
+  }
+
+  /* ── Compress to target file size ───────────────────────────────── */
+  async function compressToSize(canvas,mime,max){
+    var q=0.92;
+    while(q>=0.1){var b=await toBlob(canvas,mime,q);if(b.size<=max)return b;q-=0.05}
+    var w=canvas.width,h=canvas.height;
+    while(w>1&&h>1){
+      w=Math.max(1,Math.round(w*0.9));h=Math.max(1,Math.round(h*0.9));
+      var c2=document.createElement("canvas");c2.width=w;c2.height=h;
+      c2.getContext("2d").drawImage(canvas,0,0,w,h);
+      var b=await toBlob(c2,mime,0.1);if(b.size<=max)return b;
+    }
+    return await toBlob(canvas,mime,0.1);
+  }
+
+  /* ── Minimal ZIP builder (no dependencies) ──────────────────────── */
+  async function buildZip(entries){
+    var offset=0,cd=[],fd=[];
+    for(var i=0;i<entries.length;i++){
+      var name=entries[i].name,data=new Uint8Array(await entries[i].blob.arrayBuffer()),
+          nb=new TextEncoder().encode(name);
+      var lh=new Uint8Array(30+nb.length),lv=new DataView(lh.buffer);
+      lv.setUint32(0,0x04034b50,true);lv.setUint16(4,20,true);
+      lv.setUint32(18,data.length,true);lv.setUint32(22,data.length,true);
+      lv.setUint16(26,nb.length,true);lh.set(nb,30);
+      var ce=new Uint8Array(46+nb.length),cv=new DataView(ce.buffer);
+      cv.setUint32(0,0x02014b50,true);cv.setUint16(4,20,true);cv.setUint16(6,20,true);
+      cv.setUint32(20,data.length,true);cv.setUint32(24,data.length,true);
+      cv.setUint16(28,nb.length,true);cv.setUint32(42,offset,true);ce.set(nb,46);
+      fd.push(lh,data);cd.push(ce);offset+=lh.length+data.length;
+    }
+    var cds=cd.reduce(function(s,c){return s+c.length},0);
+    var eocd=new Uint8Array(22),ev=new DataView(eocd.buffer);
+    ev.setUint32(0,0x06054b50,true);ev.setUint16(8,entries.length,true);
+    ev.setUint16(10,entries.length,true);ev.setUint32(12,cds,true);ev.setUint32(16,offset,true);
+    return new Blob(fd.concat(cd,[eocd]),{type:"application/zip"});
+  }
+
+  /* ── Main button handler ────────────────────────────────────────── */
+  btn.addEventListener("click",async function(){
+    if(!files.length)return;
+    var tw=parseInt(document.getElementById("width").value)||0,
+        th=parseInt(document.getElementById("height").value)||0,
+        maxBytes=parseSize(document.getElementById("maxSize").value),
+        crop=document.getElementById("crop").checked,
+        fmtSel=document.getElementById("fmt").value;
+
+    if(!tw&&!th&&!maxBytes){
+      msgEl.innerHTML='<div class="msg err">Set at least width, height, or max size.</div>';return;
+    }
+
+    btn.disabled=true;spinner.style.display="block";msgEl.innerHTML="";
+
+    try{
+      var blobs=[];
+      for(var i=0;i<files.length;i++){
+        var f=files[i],img=await loadImage(f),
+            canvas=resizeCanvas(img,tw,th,crop),
+            mime=mimeFor(f,fmtSel),blob;
+        if(maxBytes&&(mime==="image/jpeg"||mime==="image/webp")){
+          blob=await compressToSize(canvas,mime,maxBytes);
+        }else{
+          blob=await toBlob(canvas,mime,0.9);
+        }
+        blobs.push({blob:blob,name:baseName(f.name)+"_resized"+extFor(mime)});
+        URL.revokeObjectURL(img.src);
+      }
+
+      if(blobs.length===1){downloadBlob(blobs[0].blob,blobs[0].name)}
+      else{downloadBlob(await buildZip(blobs),"resized_images.zip")}
+
+      /* Reset form */
+      files=[];fileInput.value="";fileCount.textContent="";
+      dropZone.classList.remove("has-files");previews.innerHTML="";
+      document.getElementById("width").value="";
+      document.getElementById("height").value="";
+      document.getElementById("maxSize").value="";
+      btn.disabled=true;
+      msgEl.innerHTML='<div class="msg ok">Done! '+blobs.length+' image(s) downloaded.</div>';
+    }catch(e){
+      msgEl.innerHTML='<div class="msg err">Error: '+e.message+'</div>';
+    }finally{
+      spinner.style.display="none";
+      btn.disabled=files.length===0;
+    }
+  });
+
+  /* ── Register service worker for PWA / offline ──────────────────── */
+  if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(function(){})}
+})();
+</script>
+</body>
+</html>
