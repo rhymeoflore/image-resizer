@@ -311,7 +311,7 @@
             canvas=resizeCanvas(img,tw,th,crop),
             mime=mimeFor(f,fmtSel),blob;
         if(maxBytes&&(mime==="image/jpeg"||mime==="image/webp")){
-          blob=await compressToSize(canvas,mime,maxBytes);
+          blob=await compressToSizeWithProgress(canvas,mime,maxBytes,function(){});
         }else{
           blob=await toBlob(canvas,mime,0.9);
         }
