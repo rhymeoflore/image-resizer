@@ -1,4 +1,4 @@
-var CACHE = 'resizer-v2';
+var CACHE = 'resizer-v3';
 var URLS = ['.', 'index.html', 'manifest.json'];
 
 self.addEventListener('install', function(e) {
