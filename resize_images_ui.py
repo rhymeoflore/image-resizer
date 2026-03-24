@@ -490,6 +490,36 @@ def compress_pdf_gs(raw_data: bytes, target_bytes: int) -> bytes | None:
     return best
 
 
+def compress_pdf_fitz(raw_data: bytes, target_bytes: int) -> bytes | None:
+    """Rendering-based PDF compression: re-draws every page as a JPEG image.
+    Works on any PDF regardless of content (text, vectors, scans)."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return None
+
+    # (DPI, JPEG quality) — ordered mild → aggressive
+    presets = [(120, 80), (96, 65), (72, 50), (60, 40), (48, 30)]
+    best = None
+    for dpi, quality in presets:
+        try:
+            src = fitz.open(stream=raw_data, filetype="pdf")
+            out = fitz.open()
+            for page in src:
+                pix = page.get_pixmap(dpi=dpi, alpha=False)
+                jpeg = pix.tobytes("jpeg", jpg_quality=quality)
+                img_pdf = fitz.open("pdf", fitz.open(stream=jpeg, filetype="jpeg").convert_to_pdf())
+                out.insert_pdf(img_pdf)
+            out_bytes = out.tobytes(garbage=4, deflate=True)
+            if best is None or len(out_bytes) < len(best):
+                best = out_bytes
+            if len(out_bytes) <= target_bytes:
+                return out_bytes
+        except Exception:
+            break
+    return best
+
+
 @app.route("/compress", methods=["POST"])
 def compress():
     f = request.files.get("file")
@@ -563,16 +593,27 @@ def compress():
         buf.seek(0, 2)
         return _add_size_headers(resp, orig_size, buf.tell())
 
-    # PDFs: use Ghostscript for real compression
+    # PDFs: try Ghostscript first, then rendering-based fallback via PyMuPDF
     if ext == ".pdf":
-        compressed = compress_pdf_gs(raw_data, target_bytes)
-        if compressed and len(compressed) < orig_size:
+        best_pdf = None
+
+        gs_result = compress_pdf_gs(raw_data, target_bytes)
+        if gs_result and len(gs_result) < orig_size:
+            best_pdf = gs_result
+
+        # If GS couldn't reach target (or wasn't available), try rendering fallback
+        if best_pdf is None or len(best_pdf) > target_bytes:
+            fitz_result = compress_pdf_fitz(raw_data, target_bytes)
+            if fitz_result and (best_pdf is None or len(fitz_result) < len(best_pdf)):
+                best_pdf = fitz_result
+
+        if best_pdf and len(best_pdf) < orig_size:
             resp = send_file(
-                io.BytesIO(compressed), mimetype="application/pdf",
+                io.BytesIO(best_pdf), mimetype="application/pdf",
                 as_attachment=True, download_name=f.filename,
             )
-            return _add_size_headers(resp, orig_size, len(compressed))
-        # Ghostscript unavailable or couldn't compress — fall through to ZIP
+            return _add_size_headers(resp, orig_size, len(best_pdf))
+        # Both methods failed — fall through to ZIP
 
     # Non-image files: ZIP with deflate compression
     zip_buf = io.BytesIO()
