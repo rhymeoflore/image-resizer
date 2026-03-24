@@ -121,7 +121,7 @@
 
     <label>Target size</label>
     <input type="text" id="compTargetSize" placeholder="e.g.  500KB  or  2MB">
-    <p class="hint">Images: reduces quality &amp; dimensions. PDFs: uses ZIP compression (limited &mdash; use the Python server for best results). Other files: ZIP compressed.</p>
+    <p class="hint">Images: compressed locally in-browser. PDFs &amp; other files: compressed via the cloud server (may take a moment to wake up).</p>
 
     <button id="compBtn" disabled>Compress &amp; Download</button>
     <div class="progress-wrap" id="compProgress">
@@ -449,10 +449,39 @@
         outName=baseName(compFile.name)+"_compressed"+extFor(mime);
         URL.revokeObjectURL(img.src);
       }else{
-        showProgress(30,"Compressing…");
-        result=await zipSingleFile(compFile);
+        // Send to Render cloud API for server-side compression (real PDF compression via Ghostscript)
+        var RENDER_API="https://image-resizer-660v.onrender.com";
+        showProgress(5,"Waking up server…");
+        var fd=new FormData();
+        fd.append("file",compFile);
+        fd.append("target_size",targetStr);
+        var progInterval=setInterval(function(){
+          var cur=parseFloat(document.getElementById("compProgressFill").style.width)||5;
+          if(cur<85){showProgress(cur+2,"Compressing on server…");}
+        },800);
+        var resp=await fetch(RENDER_API+"/compress",{method:"POST",body:fd});
+        clearInterval(progInterval);
+        if(!resp.ok){var txt=await resp.text();throw new Error(txt||"Server error "+resp.status);}
+        result=await resp.blob();
+        var cd=resp.headers.get("Content-Disposition")||"",
+            origBytes=parseInt(resp.headers.get("X-Original-Size")||compFile.size),
+            compBytes=parseInt(resp.headers.get("X-Compressed-Size")||result.size);
+        var fnMatch=cd.match(/filename\*?=(?:UTF-8'')?"?([^"\r\n]+)"?/i);
+        outName=fnMatch?fnMatch[1].replace(/^"|"$/g,""):baseName(compFile.name)+".zip";
         showProgress(90,"");
-        outName=baseName(compFile.name)+".zip";
+        // Override sizes from server headers
+        downloadBlob(result,outName);
+        finishProgress(true);
+        var saved=origBytes-compBytes;
+        var pct=origBytes?((saved/origBytes)*100).toFixed(1):"0";
+        var sizeHtml='<div class="size-summary"><span class="label">Before</span> <span class="value">'+formatBytes(origBytes)+'</span> &nbsp;&rarr;&nbsp; <span class="label">After</span> <span class="value">'+formatBytes(compBytes)+'</span> &nbsp; (saved '+pct+'%)</div>';
+        if(compBytes>targetBytes){
+          compMsgEl.innerHTML='<div class="msg err">Could not reach target &mdash; this is the maximum compression achievable.</div>'+sizeHtml;
+        }else{
+          compMsgEl.innerHTML='<div class="msg ok">Compressed successfully!</div>'+sizeHtml;
+        }
+        compSpinner.style.display="none";compBtn.disabled=!compFile;
+        return;
       }
 
       downloadBlob(result,outName);

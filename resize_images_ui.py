@@ -405,9 +405,25 @@ def _add_size_headers(resp, orig, comp):
     return resp
 
 
+ALLOWED_ORIGIN = "https://rhymeoflore.github.io"
+
 @app.after_request
 def expose_size_headers(resp):
+    origin = request.headers.get("Origin", "")
+    if origin == ALLOWED_ORIGIN:
+        resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
+        resp.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
     resp.headers["Access-Control-Expose-Headers"] = "X-Original-Size, X-Compressed-Size"
+    return resp
+
+@app.route("/compress", methods=["OPTIONS"])
+@app.route("/resize", methods=["OPTIONS"])
+def handle_preflight():
+    resp = app.make_default_options_response()
+    resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
+    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return resp
 
 
