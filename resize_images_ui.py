@@ -428,7 +428,7 @@ def handle_preflight():
 
 
 def compress_pdf_gs(raw_data: bytes, target_bytes: int) -> bytes | None:
-    """Compress PDF using Ghostscript with increasingly aggressive settings."""
+    """Compress PDF using Ghostscript with increasingly aggressive DPI presets."""
     gs_path = shutil.which("gs") or shutil.which("gswin64c")
     if not gs_path:
         return None
@@ -450,39 +450,36 @@ def compress_pdf_gs(raw_data: bytes, target_bytes: int) -> bytes | None:
             os.close(inp_fd)
             sp.run(
                 [gs_path,
-                 "-sDEVICE=pdfwrite", "-dCompatibilityLevel=1.4",
+                 "-sDEVICE=pdfwrite",
+                 "-dCompatibilityLevel=1.4",
                  f"-dPDFSETTINGS={pdfsetting}",
                  "-dNOPAUSE", "-dQUIET", "-dBATCH",
-                 # Force re-encoding of already-JPEG images (key for scanned PDFs)
+                 # Force re-encoding of already-JPEG images (prevents pass-through)
                  "-dPassThroughJPEGImages=false",
                  "-dDetectDuplicateImages=true",
-                 # Colour images
+                 # Downsample raster images to target DPI
                  "-dDownsampleColorImages=true",
-                 "-dAutoFilterColorImages=false",
-                 "-dColorImageFilter=/DCTEncode",
                  f"-dColorImageResolution={dpi}",
-                 # Gray images
                  "-dDownsampleGrayImages=true",
-                 "-dAutoFilterGrayImages=false",
-                 "-dGrayImageFilter=/DCTEncode",
                  f"-dGrayImageResolution={dpi}",
-                 # Mono images
                  "-dDownsampleMonoImages=true",
                  f"-dMonoImageResolution={min(dpi * 2, 150)}",
                  # Font compression
-                 "-dEmbedAllFonts=true",
                  "-dSubsetFonts=true",
                  "-dCompressFonts=true",
                  f"-sOutputFile={out_path}", inp_path],
                 check=True, timeout=180,
+                stderr=sp.DEVNULL,
             )
             with open(out_path, "rb") as fh:
                 result = fh.read()
-            if len(result) <= target_bytes:
-                return result
+            # Keep best result even if not at target yet
             if best is None or len(result) < len(best):
                 best = result
+            if len(result) <= target_bytes:
+                return result
         except (sp.CalledProcessError, sp.TimeoutExpired, FileNotFoundError, OSError):
+            # If this preset failed, stop trying more aggressive ones
             break
         finally:
             for p in (inp_path, out_path):
