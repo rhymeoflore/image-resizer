@@ -428,23 +428,53 @@ def handle_preflight():
 
 
 def compress_pdf_gs(raw_data: bytes, target_bytes: int) -> bytes | None:
-    """Compress PDF using Ghostscript. Returns compressed bytes or None."""
+    """Compress PDF using Ghostscript with increasingly aggressive settings."""
     gs_path = shutil.which("gs") or shutil.which("gswin64c")
     if not gs_path:
         return None
 
+    # (pdfsettings preset, image DPI) — ordered from mild to aggressive
+    presets = [
+        ("/ebook", 120),
+        ("/screen", 72),
+        ("/screen", 50),
+        ("/screen", 36),
+    ]
+
     best = None
-    for setting in ["/ebook", "/screen"]:
+    for pdfsetting, dpi in presets:
         inp_fd, inp_path = tempfile.mkstemp(suffix=".pdf")
         out_path = inp_path + "_out.pdf"
         try:
             os.write(inp_fd, raw_data)
             os.close(inp_fd)
             sp.run(
-                [gs_path, "-sDEVICE=pdfwrite", "-dCompatibilityLevel=1.4",
-                 f"-dPDFSETTINGS={setting}", "-dNOPAUSE", "-dQUIET", "-dBATCH",
+                [gs_path,
+                 "-sDEVICE=pdfwrite", "-dCompatibilityLevel=1.4",
+                 f"-dPDFSETTINGS={pdfsetting}",
+                 "-dNOPAUSE", "-dQUIET", "-dBATCH",
+                 # Force re-encoding of already-JPEG images (key for scanned PDFs)
+                 "-dPassThroughJPEGImages=false",
+                 "-dDetectDuplicateImages=true",
+                 # Colour images
+                 "-dDownsampleColorImages=true",
+                 "-dAutoFilterColorImages=false",
+                 "-dColorImageFilter=/DCTEncode",
+                 f"-dColorImageResolution={dpi}",
+                 # Gray images
+                 "-dDownsampleGrayImages=true",
+                 "-dAutoFilterGrayImages=false",
+                 "-dGrayImageFilter=/DCTEncode",
+                 f"-dGrayImageResolution={dpi}",
+                 # Mono images
+                 "-dDownsampleMonoImages=true",
+                 f"-dMonoImageResolution={min(dpi * 2, 150)}",
+                 # Font compression
+                 "-dEmbedAllFonts=true",
+                 "-dSubsetFonts=true",
+                 "-dCompressFonts=true",
                  f"-sOutputFile={out_path}", inp_path],
-                check=True, timeout=120,
+                check=True, timeout=180,
             )
             with open(out_path, "rb") as fh:
                 result = fh.read()
@@ -453,7 +483,7 @@ def compress_pdf_gs(raw_data: bytes, target_bytes: int) -> bytes | None:
             if best is None or len(result) < len(best):
                 best = result
         except (sp.CalledProcessError, sp.TimeoutExpired, FileNotFoundError, OSError):
-            return best
+            break
         finally:
             for p in (inp_path, out_path):
                 try:
