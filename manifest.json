@@ -1,7 +1,7 @@
 {
-  "name": "Image Resizer",
-  "short_name": "Resizer",
-  "description": "Resize photos to exact dimensions or file size — 100% on-device",
+  "name": "File Tools",
+  "short_name": "FileTools",
+  "description": "Resize images & compress any file — 100% on-device",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#1e1e2e",

@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Resizer">
 <meta name="theme-color" content="#1e1e2e">
 <link rel="manifest" href="manifest.json">
-<title>Image Resizer</title>
+<title>File Tools</title>
 <style>
   :root{--bg:#1e1e2e;--surface:#2a2a3e;--accent:#7c6af7;--accent-h:#9d8fff;--fg:#cdd6f4;--dim:#6c7086;--ok:#a6e3a1;--err:#f38ba8;--radius:12px}
   *{box-sizing:border-box;margin:0;padding:0}
@@ -37,19 +37,42 @@
   .msg{margin-top:16px;padding:12px;border-radius:var(--radius);font-size:.85rem;line-height:1.4;text-align:center}
   .msg.ok{background:rgba(166,227,161,.1);color:var(--ok)}
   .msg.err{background:rgba(243,139,168,.1);color:var(--err)}
+  .size-summary{margin-top:12px;padding:12px;border-radius:var(--radius);background:var(--bg);font-size:.85rem;text-align:center;line-height:1.5}
+  .size-summary .label{color:var(--dim);font-size:.75rem;text-transform:uppercase;letter-spacing:.5px}
+  .size-summary .value{color:var(--accent);font-weight:700;font-size:1rem}
   #spinner{display:none;margin-top:16px;text-align:center;color:var(--dim);font-size:.88rem}
   @keyframes spin{to{transform:rotate(360deg)}}
   #spinner::before{content:"";display:inline-block;width:16px;height:16px;border:2px solid var(--dim);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:8px}
   .preview-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
   .preview-grid img{width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--dim)}
   @media(max-width:400px){.card{padding:24px 18px}h1{font-size:1.2rem}}
+  .tabs{display:flex;gap:4px;margin-bottom:20px;background:var(--bg);border-radius:var(--radius);padding:4px}
+  .tab{flex:1;padding:10px;border:none;border-radius:8px;background:transparent;color:var(--dim);font-size:.88rem;font-weight:600;cursor:pointer;transition:all .2s;-webkit-tap-highlight-color:transparent}
+  .tab.active{background:var(--accent);color:#fff}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+  .comp-info{margin-top:10px;padding:10px;background:var(--bg);border-radius:var(--radius);font-size:.85rem}
+  .comp-info span{color:var(--accent);font-weight:600}
+  #compSpinner{display:none;margin-top:16px;text-align:center;color:var(--dim);font-size:.88rem}
+  #compSpinner::before{content:"";display:inline-block;width:16px;height:16px;border:2px solid var(--dim);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:8px}
+  .progress-wrap{display:none;margin-top:16px}
+  .progress-label{font-size:.8rem;color:var(--dim);display:flex;justify-content:space-between;margin-bottom:5px}
+  .progress-label .eta{color:var(--accent)}
+  .progress-bar-bg{background:var(--bg);border-radius:100px;height:7px;overflow:hidden}
+  .progress-bar-fill{height:100%;background:var(--accent);border-radius:100px;width:0%;transition:width .25s ease}
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>Image Resizer</h1>
-  <p class="sub">100% on-device &mdash; your photos never leave your phone</p>
+  <h1>File Tools</h1>
+  <p class="sub">100% on-device &mdash; your files never leave your device</p>
 
+  <div class="tabs">
+    <button class="tab active" data-tab="resize">Image Resizer</button>
+    <button class="tab" data-tab="compress">File Compressor</button>
+  </div>
+
+  <div class="tab-panel active" id="tab-resize">
   <label>Images</label>
   <div class="file-drop" id="dropZone">
     <input type="file" id="fileInput" accept="image/*" multiple>
@@ -83,6 +106,31 @@
   <button id="btn" disabled>Resize &amp; Download</button>
   <div id="spinner">Processing&hellip;</div>
   <div id="msg"></div>
+  </div>
+
+  <div class="tab-panel" id="tab-compress">
+    <label>File</label>
+    <div class="file-drop" id="compDropZone">
+      <input type="file" id="compFileInput">
+      <p>Tap to choose or drop any file here</p>
+      <div class="count" id="compFileInfo"></div>
+    </div>
+    <div class="comp-info" id="compSizeInfo" style="display:none">
+      Current size: <span id="compCurrentSize"></span>
+    </div>
+
+    <label>Target size</label>
+    <input type="text" id="compTargetSize" placeholder="e.g.  500KB  or  2MB">
+    <p class="hint">Images: reduces quality &amp; dimensions. PDFs: uses ZIP compression (limited &mdash; use the Python server for best results). Other files: ZIP compressed.</p>
+
+    <button id="compBtn" disabled>Compress &amp; Download</button>
+    <div class="progress-wrap" id="compProgress">
+      <div class="progress-label"><span id="compPct">0%</span><span class="eta" id="compEta"></span></div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="compFill"></div></div>
+    </div>
+    <div id="compSpinner">Compressing&hellip;</div>
+    <div id="compMsg"></div>
+  </div>
 </div>
 
 <script>
@@ -170,16 +218,49 @@
     c.getContext("2d").drawImage(img,0,0,c.width,c.height);return c;
   }
 
-  /* ── Compress to target file size ───────────────────────────────── */
-  async function compressToSize(canvas,mime,max){
+  /* ── Progress bar helpers ──────────────────────────────────── */
+  var compFillEl=document.getElementById("compFill"),
+      compPctEl=document.getElementById("compPct"),
+      compEtaEl=document.getElementById("compEta"),
+      compProgressWrap=document.getElementById("compProgress");
+
+  function showProgress(pct,etaStr){
+    compProgressWrap.style.display="block";
+    compFillEl.style.width=pct+"%";
+    compPctEl.textContent=pct+"%";
+    compEtaEl.textContent=etaStr||"";
+  }
+  function finishProgress(ok){
+    compFillEl.style.transition="width .4s ease";
+    compFillEl.style.width="100%";
+    compFillEl.style.background=ok?"var(--ok)":"var(--err)";
+    compPctEl.textContent="100%";
+    compEtaEl.textContent="";
+    setTimeout(function(){compProgressWrap.style.display="none";compFillEl.style.background="var(--accent)";compFillEl.style.transition="width .25s ease"},1600);
+  }
+
+  /* ── Compress to target file size (with progress cb) ─────────── */
+  async function compressToSizeWithProgress(canvas,mime,max,onProgress){
+    /* Phase 1: quality steps (0–60%) */
+    var totalSteps=17+20; /* ~17 quality steps + ~20 scale steps */
+    var step=0;
+    var startTime=Date.now();
+    function reportProgress(){
+      step++;
+      var pct=Math.min(97,Math.round(step/totalSteps*100));
+      var elapsed=Date.now()-startTime;
+      var rate=elapsed/step;
+      var remaining=Math.max(0,Math.round((totalSteps-step)*rate/1000));
+      onProgress(pct, remaining>0?"ETA "+remaining+"s":"");
+    }
     var q=0.92;
-    while(q>=0.1){var b=await toBlob(canvas,mime,q);if(b.size<=max)return b;q-=0.05}
+    while(q>=0.1){var b=await toBlob(canvas,mime,q);reportProgress();if(b.size<=max)return b;q-=0.05}
     var w=canvas.width,h=canvas.height;
     while(w>1&&h>1){
       w=Math.max(1,Math.round(w*0.9));h=Math.max(1,Math.round(h*0.9));
       var c2=document.createElement("canvas");c2.width=w;c2.height=h;
       c2.getContext("2d").drawImage(canvas,0,0,w,h);
-      var b=await toBlob(c2,mime,0.1);if(b.size<=max)return b;
+      var b=await toBlob(c2,mime,0.1);reportProgress();if(b.size<=max)return b;
     }
     return await toBlob(canvas,mime,0.1);
   }
@@ -223,8 +304,9 @@
     btn.disabled=true;spinner.style.display="block";msgEl.innerHTML="";
 
     try{
-      var blobs=[];
+      var blobs=[],origTotal=0;
       for(var i=0;i<files.length;i++){
+        origTotal+=files[i].size;
         var f=files[i],img=await loadImage(f),
             canvas=resizeCanvas(img,tw,th,crop),
             mime=mimeFor(f,fmtSel),blob;
@@ -247,12 +329,147 @@
       document.getElementById("height").value="";
       document.getElementById("maxSize").value="";
       btn.disabled=true;
-      msgEl.innerHTML='<div class="msg ok">Done! '+blobs.length+' image(s) downloaded.</div>';
+      var outTotal=blobs.reduce(function(s,b){return s+b.blob.size},0);
+      var pct=origTotal?((origTotal-outTotal)/origTotal*100).toFixed(1):"0";
+      msgEl.innerHTML='<div class="msg ok">'+blobs.length+' image(s) downloaded</div><div class="size-summary"><span class="label">Before</span> <span class="value">'+formatBytes(origTotal)+'</span> &nbsp;&rarr;&nbsp; <span class="label">After</span> <span class="value">'+formatBytes(outTotal)+'</span> &nbsp; (saved '+pct+'%)</div>';
     }catch(e){
       msgEl.innerHTML='<div class="msg err">Error: '+e.message+'</div>';
     }finally{
       spinner.style.display="none";
       btn.disabled=files.length===0;
+    }
+  });
+
+  /* ── Tab switching ──────────────────────────────────────────────── */
+  document.querySelectorAll(".tab").forEach(function(t){
+    t.addEventListener("click",function(){
+      document.querySelectorAll(".tab").forEach(function(x){x.classList.remove("active")});
+      document.querySelectorAll(".tab-panel").forEach(function(x){x.classList.remove("active")});
+      t.classList.add("active");
+      document.getElementById("tab-"+t.dataset.tab).classList.add("active");
+    });
+  });
+
+  /* ── File Compressor ────────────────────────────────────────────── */
+  var compFileInput=document.getElementById("compFileInput"),
+      compDropZone=document.getElementById("compDropZone"),
+      compFileInfo=document.getElementById("compFileInfo"),
+      compSizeInfo=document.getElementById("compSizeInfo"),
+      compCurrentSize=document.getElementById("compCurrentSize"),
+      compBtn=document.getElementById("compBtn"),
+      compSpinner=document.getElementById("compSpinner"),
+      compMsgEl=document.getElementById("compMsg"),
+      compFile=null;
+
+  function formatBytes(b){
+    if(b>=1048576)return(b/1048576).toFixed(2)+" MB";
+    if(b>=1024)return(b/1024).toFixed(1)+" KB";
+    return b+" B";
+  }
+
+  compFileInput.addEventListener("change",function(){if(this.files.length)setCompFile(this.files[0])});
+  compDropZone.addEventListener("dragover",function(e){e.preventDefault();compDropZone.classList.add("over")});
+  compDropZone.addEventListener("dragleave",function(){compDropZone.classList.remove("over")});
+  compDropZone.addEventListener("drop",function(e){
+    e.preventDefault();compDropZone.classList.remove("over");
+    if(e.dataTransfer.files.length)setCompFile(e.dataTransfer.files[0]);
+  });
+
+  function setCompFile(f){
+    compFile=f;compFileInfo.textContent=f.name;
+    compDropZone.classList.add("has-files");
+    compSizeInfo.style.display="block";
+    compCurrentSize.textContent=formatBytes(f.size);
+    compBtn.disabled=false;compMsgEl.innerHTML="";
+  }
+
+  function crc32(data){
+    var table=new Uint32Array(256);
+    for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);table[n]=c}
+    var crc=0xFFFFFFFF;
+    for(var i=0;i<data.length;i++)crc=table[(crc^data[i])&0xFF]^(crc>>>8);
+    return(crc^0xFFFFFFFF)>>>0;
+  }
+
+  async function deflateRaw(data){
+    if(typeof CompressionStream!=="undefined"){
+      var cs=new CompressionStream("deflate-raw");
+      var w=cs.writable.getWriter();w.write(data);w.close();
+      return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+    }
+    return null;
+  }
+
+  async function zipSingleFile(file){
+    var raw=new Uint8Array(await file.arrayBuffer());
+    var crc=crc32(raw),deflated=await deflateRaw(raw);
+    var useDeflate=deflated&&deflated.length<raw.length;
+    var stored=useDeflate?deflated:raw,method=useDeflate?8:0;
+    var nb=new TextEncoder().encode(file.name);
+    var lh=new Uint8Array(30+nb.length),lv=new DataView(lh.buffer);
+    lv.setUint32(0,0x04034b50,true);lv.setUint16(4,20,true);
+    lv.setUint16(8,method,true);lv.setUint32(14,crc,true);
+    lv.setUint32(18,stored.length,true);lv.setUint32(22,raw.length,true);
+    lv.setUint16(26,nb.length,true);lh.set(nb,30);
+    var ce=new Uint8Array(46+nb.length),cv=new DataView(ce.buffer);
+    cv.setUint32(0,0x02014b50,true);cv.setUint16(4,20,true);cv.setUint16(6,20,true);
+    cv.setUint16(10,method,true);cv.setUint32(16,crc,true);
+    cv.setUint32(20,stored.length,true);cv.setUint32(24,raw.length,true);
+    cv.setUint16(28,nb.length,true);cv.setUint32(42,0,true);ce.set(nb,46);
+    var offset=lh.length+stored.length;
+    var eocd=new Uint8Array(22),ev=new DataView(eocd.buffer);
+    ev.setUint32(0,0x06054b50,true);ev.setUint16(8,1,true);ev.setUint16(10,1,true);
+    ev.setUint32(12,ce.length,true);ev.setUint32(16,offset,true);
+    return new Blob([lh,stored,ce,eocd],{type:"application/zip"});
+  }
+
+  compBtn.addEventListener("click",async function(){
+    if(!compFile)return;
+    var targetStr=document.getElementById("compTargetSize").value.trim();
+    var targetBytes=parseSize(targetStr);
+    if(!targetBytes){
+      compMsgEl.innerHTML='<div class="msg err">Enter a valid target size (e.g. 500KB or 2MB).</div>';return;
+    }
+    if(targetBytes>=compFile.size){
+      compMsgEl.innerHTML='<div class="msg ok">File is already smaller than '+targetStr+' ('+formatBytes(compFile.size)+').</div>';return;
+    }
+
+    compBtn.disabled=true;compSpinner.style.display="block";compMsgEl.innerHTML="";
+    showProgress(0,"Starting…");
+
+    try{
+      var result,outName;
+      if(compFile.type.startsWith("image/")){
+        var img=await loadImage(compFile);
+        var canvas=document.createElement("canvas");
+        canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;
+        canvas.getContext("2d").drawImage(img,0,0);
+        var mime=(compFile.type==="image/webp")?"image/webp":"image/jpeg";
+        result=await compressToSizeWithProgress(canvas,mime,targetBytes,function(p,eta){showProgress(p,eta);});
+        outName=baseName(compFile.name)+"_compressed"+extFor(mime);
+        URL.revokeObjectURL(img.src);
+      }else{
+        showProgress(30,"Compressing…");
+        result=await zipSingleFile(compFile);
+        showProgress(90,"");
+        outName=baseName(compFile.name)+".zip";
+      }
+
+      downloadBlob(result,outName);
+      finishProgress(true);
+      var saved=compFile.size-result.size;
+      var pct=compFile.size?((saved/compFile.size)*100).toFixed(1):"0";
+      var sizeHtml='<div class="size-summary"><span class="label">Before</span> <span class="value">'+formatBytes(compFile.size)+'</span> &nbsp;&rarr;&nbsp; <span class="label">After</span> <span class="value">'+formatBytes(result.size)+'</span> &nbsp; (saved '+pct+'%)</div>';
+      if(result.size>targetBytes){
+        compMsgEl.innerHTML='<div class="msg err">Could not reach target &mdash; this is the maximum compression achievable.</div>'+sizeHtml;
+      }else{
+        compMsgEl.innerHTML='<div class="msg ok">Compressed successfully!</div>'+sizeHtml;
+      }
+    }catch(e){
+      finishProgress(false);
+      compMsgEl.innerHTML='<div class="msg err">Error: '+e.message+'</div>';
+    }finally{
+      compSpinner.style.display="none";compBtn.disabled=!compFile;
     }
   });
 
