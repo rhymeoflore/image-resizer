@@ -60,12 +60,15 @@
   .progress-label .eta{color:var(--accent)}
   .progress-bar-bg{background:var(--bg);border-radius:100px;height:7px;overflow:hidden}
   .progress-bar-fill{height:100%;background:var(--accent);border-radius:100px;width:0%;transition:width .25s ease}
+  .view-count{text-align:center;color:var(--dim);font-size:.78rem;margin-bottom:18px}
+  .view-count span{color:var(--accent);font-weight:600}
 </style>
 </head>
 <body>
 <div class="card">
   <h1>File Tools</h1>
   <p class="sub">100% on-device &mdash; your files never leave your device</p>
+  <div class="view-count" id="viewCount" style="display:none">&#128065; <span id="viewNum">0</span> views</div>
 
   <div class="tabs">
     <button class="tab active" data-tab="resize">Image Resizer</button>
@@ -501,6 +504,17 @@
       compSpinner.style.display="none";compBtn.disabled=!compFile;
     }
   });
+
+  /* ── View counter ────────────────────────────────────────────────── */
+  (function(){
+    var RENDER_API="https://image-resizer-660v.onrender.com";
+    fetch(RENDER_API+"/views",{method:"POST"})
+      .then(function(r){return r.json()})
+      .then(function(d){
+        var el=document.getElementById("viewCount"),num=document.getElementById("viewNum");
+        if(el&&num&&d.views){num.textContent=d.views;el.style.display="block";}
+      }).catch(function(){});
+  })();
 
   /* ── Register service worker for PWA / offline ──────────────────── */
   if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(function(){})}

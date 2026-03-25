@@ -11,11 +11,13 @@ Opens http://localhost:5050 in your browser.
 from __future__ import annotations
 
 import io
+import json
 import os
 import shutil
 import subprocess as sp
 import sys
 import tempfile
+import threading
 import webbrowser
 import zipfile
 from pathlib import Path
@@ -37,6 +39,27 @@ except ImportError:
 from resize_images import parse_size
 
 app = Flask(__name__)
+
+# ── View counter ──────────────────────────────────────────────
+VIEWS_FILE = Path(__file__).resolve().parent / "views.json"
+_views_lock = threading.Lock()
+
+
+def _read_views() -> int:
+    try:
+        with open(VIEWS_FILE) as f:
+            return json.load(f).get("count", 0)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        return 0
+
+
+def _increment_views() -> int:
+    with _views_lock:
+        count = _read_views() + 1
+        with open(VIEWS_FILE, "w") as f:
+            json.dump({"count": count}, f)
+        return count
+
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"}
 
@@ -84,12 +107,15 @@ HTML = r"""
   .progress-label .eta{color:var(--accent)}
   .progress-bar-bg{background:var(--bg);border-radius:100px;height:8px;overflow:hidden}
   .progress-bar-fill{height:100%;background:var(--accent);border-radius:100px;width:0%;transition:width .3s ease}
+  .view-count{text-align:center;color:var(--dim);font-size:.78rem;margin-bottom:18px}
+  .view-count span{color:var(--accent);font-weight:600}
 </style>
 </head>
 <body>
 <div class="card">
   <h1>File Tools</h1>
   <p class="sub">Resize images or compress any file &mdash; all on your machine</p>
+  <div class="view-count">&#128065; <span>{{ views }}</span> views</div>
 
   <div class="tabs">
     <button class="tab active" data-tab="resize">Image Resizer</button>
@@ -332,7 +358,18 @@ def resize_single(img, width, height, crop, max_bytes, fmt):
 
 @app.route("/")
 def index():
-    return render_template_string(HTML)
+    count = _increment_views()
+    return render_template_string(HTML, views=count)
+
+
+@app.route("/views", methods=["GET"])
+def views_get():
+    return {"views": _read_views()}
+
+
+@app.route("/views", methods=["POST"])
+def views_post():
+    return {"views": _increment_views()}
 
 
 @app.route("/resize", methods=["POST"])
@@ -419,10 +456,11 @@ def expose_size_headers(resp):
 
 @app.route("/compress", methods=["OPTIONS"])
 @app.route("/resize", methods=["OPTIONS"])
+@app.route("/views", methods=["OPTIONS"])
 def handle_preflight():
     resp = app.make_default_options_response()
     resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
-    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return resp
 
